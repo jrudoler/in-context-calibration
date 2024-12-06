@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "in-context-calibration"
+version = "0.1.0"
+description = ""
+authors = ["Joseph Rudoler"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+torch = "^2.5.1"
+lightning = "^2.4.0"
+transformers = "^4.46.2"
+ipykernel = "^6.29.5"
+huggingface-hub = {extras = ["cli", "torch"], version = "^0.26.2"}
+accelerate = "^1.1.1"
+scikit-learn = "^1.5.2"
+pandas = "^2.2.3"
+polars = "^1.16.0"
+matplotlib = "^3.9.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
