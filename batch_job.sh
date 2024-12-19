@@ -4,7 +4,7 @@
 #SBATCH --partition=whartonstat
 #SBATCH --output=/home/jrudoler/logs/sst2_classification_%A_%a.out
 #SBATCH --error=/home/jrudoler/logs/sst2_classification_%A_%a.err
-#SBATCH --array=0-7
+#SBATCH --array=0-23
 #SBATCH --time=06:00:00
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=2
@@ -12,11 +12,13 @@
 
 # Define the parameter combinations
 # declare -a model_ids=("meta-llama/Llama-3.2-1B-Instruct" "meta-llama/Llama-3.2-3B-Instruct" "google/gemma-2-2b-it" "google/gemma-2-9b-it")
-declare -a model_ids=("meta-llama/Llama-3.3-70B-Instruct")
-declare -a n_contexts=(4 8 16 32 64 128 256 512)
-batch_size=4  # Use a single batch size
+declare -a model_ids=("google/gemma-2-2b-it" "google/gemma-2-9b-it" "tiiuae/Falcon3-10B-Instruct-GPTQ-Int8" "meta-llama/Llama-3.3-70B-Instruct")
+# declare -a model_ids=("google/gemma-2-2b-it")
+# declare -a model_ids=("meta-llama/Llama-3.3-70B-Instruct")
+declare -a n_contexts=(16 32 64 128 256 512)
+batch_size=2  # Use a single batch size
 seed=42  # Use a single seed
-n_target=500
+n_target=1500
 
 # Calculate the total number of combinations
 total_combinations=$((${#model_ids[@]} * ${#n_contexts[@]}))

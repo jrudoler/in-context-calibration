@@ -4,6 +4,7 @@ import polars as pl
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
+from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from data_handling import create_few_shot_sst2_messages, SST2Dataset
 from tqdm import tqdm
@@ -18,28 +19,47 @@ def load_sst2_data():
         "validation": "data/validation-00000-of-00001.parquet",
         "test": "data/test-00000-of-00001.parquet",
     }
-    sst2_train = pl.read_parquet("hf://datasets/stanfordnlp/sst2/" + splits["train"])
-    sst2_test = pl.read_parquet("hf://datasets/stanfordnlp/sst2/" + splits["validation"])
+    sst2 = pl.read_parquet("hf://datasets/stanfordnlp/sst2/" + splits["train"])
+    sst2_train, sst2_test = train_test_split(sst2, test_size=0.5, random_state=42, shuffle=True, stratify=sst2["label"])
+    # sst2_test = pl.read_parquet("hf://datasets/stanfordnlp/sst2/" + splits["test"])
     return sst2_train, sst2_test
 
 
 def load_model(model_id):
+    tokenizer = AutoTokenizer.from_pretrained(model_id, padding_side="left", add_prefix_space=False)
+    tokenizer.pad_token_id = tokenizer.eos_token_id
     if "gemma" in model_id:
+        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
         model = AutoModelForCausalLM.from_pretrained(
             model_id,
             device_map="auto",
-            torch_dtype=torch.bfloat16,
+            quantization_config=quantization_config,
         )
+        # update chat template to allow for assistant role to go first
+        tokenizer.chat_template = "{{ bos_token }}{% for message in messages %}\
+            {% if (message['role'] == 'assistant') %}{% set role = 'model' %}\
+            {% else %}{% set role = message['role'] %}{% endif %}\
+            {{ '<start_of_turn>' + role + '\n' + message['content'] | trim + '<end_of_turn>\n' }}{% endfor %}\
+            {% if add_generation_prompt %}{{'<start_of_turn>model\n'}}{% endif %}"
     elif "llama" in model_id:
         quantization_config = BitsAndBytesConfig(load_in_8bit=True)
         model = AutoModelForCausalLM.from_pretrained(
             model_id, device_map="auto", quantization_config=quantization_config, torch_dtype="auto"
         )
+    elif "Falcon" in model_id:
+        quantization_config = BitsAndBytesConfig(load_in_4bit=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, device_map="auto", quantization_config=quantization_config, torch_dtype="auto"
+        )
+    elif "Mistral" in model_id:
+        quantization_config = BitsAndBytesConfig(load_in_4bit=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, device_map="auto", quantization_config=quantization_config, torch_dtype="auto"
+        )
+
     else:
         warnings.warn(f"Model {model_id} not supported")
         model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", torch_dtype="auto")
-    tokenizer = AutoTokenizer.from_pretrained(model_id, padding_side="left")
-    tokenizer.pad_token_id = tokenizer.eos_token_id
     return tokenizer, model
 
 
@@ -69,7 +89,7 @@ def check_environment():
 def prepare_data(sst2_train, sst2_test, config):
     context_samples = sst2_train.sample(config["n_context"], seed=config["seed"])
     # print the proportion of positive and negative samples
-    print(context_samples["label"].value_counts(normalize=True))
+    # print(context_samples["label"].value_counts(normalize=True))
     target_samples = sst2_test.sample(config["n_target"], seed=config["seed"])
     target_messages = create_few_shot_sst2_messages(context_samples, target_samples)
     return context_samples, target_samples, target_messages
@@ -91,16 +111,21 @@ def generate_predictions(loader, tokenizer, model, device):
         )
         batch_tokens = tokenizer.batch_encode_plus(batch_messages_str, return_tensors="pt", padding=True).to(device)
         outputs = model.generate(  # max_new_tokens was 10 initially
-            **batch_tokens, max_new_tokens=3, output_scores=True, output_logits=True, renormalize_logits=True
+            **batch_tokens, max_new_tokens=1, output_scores=True, output_logits=True, renormalize_logits=True
         )
-        print(batch_messages_str)
-        print(outputs)
+        # print(batch_messages_str)
+        # print(outputs)
         # -3: includes the end-of-turn and end-of-sequence tokens
-        preds = tokenizer.batch_decode(outputs["sequences"][:, -2:], skip_special_tokens=True)
+        preds = tokenizer.batch_decode(outputs["sequences"][:, -1:], skip_special_tokens=True)
         # if len(preds[0]) == 0:
         #     print(tokenizer.batch_decode(outputs["sequences"], skip_special_tokens=False))
         print(preds)
-        test_preds.extend([int(pred) for pred in preds])
+        # filter out predictions that are not 0 or 1, if it can be converted to an int
+        # get indices of preds that can be converted to an int
+        # valid_indices = [i for i, pred in enumerate(preds) if pred in ["0", "1"]]
+        # convert preds to int, otherwise fill with nan
+        preds = [int(pred) if pred in ["0", "1"] else np.nan for pred in preds]
+        test_preds.extend(preds)
         probs = torch.softmax(outputs["logits"][0], dim=-1).max(dim=-1).values.cpu().numpy().tolist()
         test_probs.extend(probs)
     return np.array(test_preds), np.array(test_probs)
